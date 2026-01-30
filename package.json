@@ -1,0 +1,32 @@
+{
+  "name": "schedule-manager-workspace",
+  "version": "0.1.0",
+  "description": "Schedule Manager - Automatic time blocking for work, academic, and household tasks",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "electron"
+  ],
+  "scripts": {
+    "setup": "cp -n .env.example .env && echo '✓ Created .env file - please fill in your values' || echo '✓ .env already exists'",
+    "backend:install": "cd backend && poetry install",
+    "backend:dev": "cd backend && poetry run uvicorn app.main:app --reload --port 8765",
+    "frontend:install": "cd frontend && npm install",
+    "frontend:dev": "cd frontend && npm start",
+    "frontend:build": "cd frontend && npm run build",
+    "electron:install": "cd electron && npm install",
+    "electron:build": "cd electron && npm run build",
+    "electron:dev": "cd electron && npm run dev",
+    "install:all": "npm run backend:install && npm run frontend:install && npm run electron:install",
+    "dev": "concurrently -n \"API,WEB\" -c \"magenta,cyan\" \"npm run backend:dev\" \"npm run frontend:dev\"",
+    "dev:full": "concurrently -n \"API,WEB,APP\" -c \"magenta,cyan,yellow\" \"npm run backend:dev\" \"npm run frontend:dev\" \"sleep 5 && npm run electron:dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Steven",
+  "license": "MIT"
+}
