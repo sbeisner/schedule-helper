@@ -73,6 +73,10 @@ export class ApiService {
     });
   }
 
+  completeAssignment(id: string): Observable<any> {
+    return this.http.post<any>(`${this.baseUrl}/courses/assignments/${id}/complete`, null);
+  }
+
   // Calendar / Time Blocks
   getTimeBlocks(startDate?: string, endDate?: string): Observable<any[]> {
     const params: any = {};
@@ -104,6 +108,13 @@ export class ApiService {
     if (startDate) params.start_date = startDate;
     if (endDate) params.end_date = endDate;
     return this.http.get<any[]>(`${this.baseUrl}/calendar/events`, { params });
+  }
+
+  syncCalendarEvents(startDate?: string, endDate?: string): Observable<any> {
+    const params: any = {};
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+    return this.http.post<any>(`${this.baseUrl}/calendar/sync`, null, { params });
   }
 
   // Scheduling

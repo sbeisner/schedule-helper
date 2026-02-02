@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: schedule-manager-backend
+    ports:
+      - "8765:8765"
+    environment:
+      - DATABASE_PATH=/data/data.db
+      - GOOGLE_TOKEN_PATH=/data/google_token.json
+      - GOOGLE_CREDENTIALS_PATH=/data/credentials.json
+      - OLLAMA_URL=http://ollama:11434
+    volumes:
+      - schedule-data:/data
+      - ./backend/app:/app/app:ro
+    depends_on:
+      - ollama
+    networks:
+      - schedule-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend (Angular + Nginx)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: schedule-manager-frontend
+    ports:
+      - "4200:80"
+    depends_on:
+      - backend
+    networks:
+      - schedule-network
+    restart: unless-stopped
+
+  # Ollama for LLM analysis
+  ollama:
+    image: ollama/ollama:latest
+    container_name: schedule-manager-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - schedule-network
+    restart: unless-stopped
+    # Note: After first start, run: make setup-ollama
+    # Or manually: docker exec -it schedule-manager-ollama ollama pull llama3:8b
+
+volumes:
+  schedule-data:
+    driver: local
+  ollama-data:
+    driver: local
+
+networks:
+  schedule-network:
+    driver: bridge

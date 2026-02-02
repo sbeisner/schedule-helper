@@ -42,6 +42,9 @@ class TimeBlock(BaseEntity):
     actual_duration_minutes: Optional[int] = None  # For completed blocks
     notes: Optional[str] = None
 
+    # For assignments - track if underlying assignment is completed
+    is_completed: Optional[bool] = None
+
     @computed_field
     @property
     def duration(self) -> timedelta:

@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 from typing import Optional
 
-from pydantic import Field, computed_field
+from pydantic import BaseModel, Field, computed_field
 
 from app.models.base import (
     BaseEntity,
@@ -23,6 +23,9 @@ class Project(BaseEntity, SourceTracking):
     # Hour tracking
     total_hours_allocated: float = Field(ge=0, description="Total hours budgeted for project")
     hours_used: float = Field(default=0, ge=0, description="Hours already logged")
+    allocation_percentage: float = Field(
+        default=100.0, ge=0, le=100, description="Percentage of time allocated to this project (e.g., 25 for 25%)"
+    )
 
     # Constraints
     weekly_hour_cap: Optional[float] = Field(
@@ -115,12 +118,13 @@ class HouseholdTask(BaseEntity, SourceTracking):
                 return None
 
 
-class ProjectCreate(BaseEntity):
+class ProjectCreate(BaseModel):
     """Schema for creating a new project."""
 
     name: str
     description: Optional[str] = None
     total_hours_allocated: float = Field(ge=0)
+    allocation_percentage: float = Field(default=100.0, ge=0, le=100)
     weekly_hour_cap: Optional[float] = None
     daily_hour_cap: Optional[float] = None
     priority: Priority = Priority.MEDIUM
@@ -129,13 +133,14 @@ class ProjectCreate(BaseEntity):
     end_date: Optional[date] = None
 
 
-class ProjectUpdate(BaseEntity):
+class ProjectUpdate(BaseModel):
     """Schema for updating a project."""
 
     name: Optional[str] = None
     description: Optional[str] = None
     total_hours_allocated: Optional[float] = None
     hours_used: Optional[float] = None
+    allocation_percentage: Optional[float] = None
     weekly_hour_cap: Optional[float] = None
     daily_hour_cap: Optional[float] = None
     priority: Optional[Priority] = None

@@ -1,6 +1,6 @@
 """Household tasks API endpoints."""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 from uuid import uuid4
 
@@ -11,8 +11,10 @@ from app.db import get_db
 from app.db.tables import HouseholdTaskTable
 from app.models.project import HouseholdTask
 from app.models.base import Priority, RecurrencePattern, TimeSlotPreference
+from app.config import get_settings
 
 router = APIRouter()
+settings = get_settings()
 
 
 @router.get("/", response_model=list[HouseholdTask])
@@ -98,6 +100,66 @@ async def delete_task(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     db.delete(db_task)
     db.commit()
+
+
+@router.post("/sync-from-sheets")
+async def sync_from_sheets(db: Session = Depends(get_db)):
+    """Sync household tasks from Google Sheets."""
+    if not settings.household_sheet_id:
+        raise HTTPException(
+            status_code=400,
+            detail="HOUSEHOLD_SHEET_ID not configured in .env file"
+        )
+
+    try:
+        from app.services.google.sheets_service import GoogleSheetsService
+
+        sheets_service = GoogleSheetsService()
+        tasks_data = sheets_service.read_household_tasks(settings.household_sheet_id)
+
+        created_count = 0
+        updated_count = 0
+
+        for task_data in tasks_data:
+            # Check if task already exists (by name)
+            existing = db.query(HouseholdTaskTable).filter(
+                HouseholdTaskTable.name == task_data['name'],
+                HouseholdTaskTable.source_adapter == 'google_sheets'
+            ).first()
+
+            if existing:
+                # Update existing task
+                for key, value in task_data.items():
+                    if key != 'name':  # Don't update the name (it's our key)
+                        setattr(existing, key, value)
+                existing.last_synced = datetime.utcnow()
+                updated_count += 1
+            else:
+                # Create new task
+                task = HouseholdTaskTable(
+                    id=str(uuid4()),
+                    **task_data,
+                    source_adapter='google_sheets',
+                    source_id=task_data['name'],  # Use name as source ID
+                    last_synced=datetime.utcnow()
+                )
+                db.add(task)
+                created_count += 1
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": f"Synced {len(tasks_data)} tasks from Google Sheets",
+            "created": created_count,
+            "updated": updated_count,
+            "total": len(tasks_data)
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync: {str(e)}")
 
 
 def _table_to_model(table: HouseholdTaskTable) -> HouseholdTask:

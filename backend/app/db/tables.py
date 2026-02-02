@@ -27,6 +27,7 @@ class ProjectTable(Base):
 
     total_hours_allocated: Mapped[float] = mapped_column(Float, default=0)
     hours_used: Mapped[float] = mapped_column(Float, default=0)
+    allocation_percentage: Mapped[float] = mapped_column(Float, default=100.0)
     weekly_hour_cap: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     daily_hour_cap: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 

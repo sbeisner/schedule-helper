@@ -15,10 +15,14 @@ from app.models.calendar import (
     TimeBlockUpdate,
     TimeBlockStatus,
     ExternalEvent,
+    CalendarSyncResult,
 )
 from app.models.base import TaskType
+from app.services.google.calendar_service import GoogleCalendarService
+from app.config import get_settings
 
 router = APIRouter()
+settings = get_settings()
 
 
 # Time Block endpoints
@@ -46,7 +50,7 @@ async def list_time_blocks(
         query = query.filter(TimeBlockTable.status == status.value)
 
     blocks = query.order_by(TimeBlockTable.start_time).all()
-    return [_block_to_model(b) for b in blocks]
+    return [_block_to_model(b, db) for b in blocks]
 
 
 @router.get("/blocks/{block_id}", response_model=TimeBlock)
@@ -55,7 +59,7 @@ async def get_time_block(block_id: str, db: Session = Depends(get_db)):
     block = db.query(TimeBlockTable).filter(TimeBlockTable.id == block_id).first()
     if not block:
         raise HTTPException(status_code=404, detail="Time block not found")
-    return _block_to_model(block)
+    return _block_to_model(block, db)
 
 
 @router.post("/blocks", response_model=TimeBlock, status_code=201)
@@ -73,7 +77,7 @@ async def create_time_block(block: TimeBlockCreate, db: Session = Depends(get_db
     db.add(db_block)
     db.commit()
     db.refresh(db_block)
-    return _block_to_model(db_block)
+    return _block_to_model(db_block, db)
 
 
 @router.put("/blocks/{block_id}", response_model=TimeBlock)
@@ -93,7 +97,7 @@ async def update_time_block(
 
     db.commit()
     db.refresh(db_block)
-    return _block_to_model(db_block)
+    return _block_to_model(db_block, db)
 
 
 @router.post("/blocks/{block_id}/complete", response_model=TimeBlock)
@@ -116,7 +120,7 @@ async def complete_time_block(
 
     db.commit()
     db.refresh(db_block)
-    return _block_to_model(db_block)
+    return _block_to_model(db_block, db)
 
 
 @router.post("/blocks/{block_id}/skip", response_model=TimeBlock)
@@ -136,7 +140,7 @@ async def skip_time_block(
 
     db.commit()
     db.refresh(db_block)
-    return _block_to_model(db_block)
+    return _block_to_model(db_block, db)
 
 
 @router.delete("/blocks/{block_id}", status_code=204)
@@ -173,8 +177,97 @@ async def list_external_events(
     return [_event_to_model(e) for e in events]
 
 
-def _block_to_model(table: TimeBlockTable) -> TimeBlock:
+@router.post("/sync", response_model=CalendarSyncResult)
+async def sync_calendar_events(
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Sync events from Google Calendar to local database."""
+    result = CalendarSyncResult()
+
+    try:
+        # Initialize calendar service
+        calendar_service = GoogleCalendarService()
+
+        # Get calendar ID from settings
+        calendar_id = settings.google_calendar_id or 'primary'
+
+        # Fetch events from Google Calendar
+        if not start_date:
+            start_date = datetime.utcnow()
+        if not end_date:
+            end_date = start_date + timedelta(days=14)
+
+        google_events = calendar_service.list_events(
+            calendar_id=calendar_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        result.events_fetched = len(google_events)
+
+        # Track existing events
+        existing_event_ids = {
+            e.google_event_id: e
+            for e in db.query(ExternalEventTable).all()
+        }
+
+        for event_data in google_events:
+            google_event_id = event_data['google_event_id']
+
+            if google_event_id in existing_event_ids:
+                # Update existing event
+                existing_event = existing_event_ids[google_event_id]
+                existing_event.title = event_data['title']
+                existing_event.description = event_data.get('description')
+                existing_event.start_time = event_data['start_time']
+                existing_event.end_time = event_data['end_time']
+                existing_event.is_all_day = event_data['is_all_day']
+                existing_event.is_recurring = event_data['is_recurring']
+                existing_event.recurrence_rule = event_data.get('recurrence_rule')
+                existing_event.calendar_id = event_data['calendar_id']
+                existing_event.last_synced = datetime.utcnow()
+                existing_event.updated_at = datetime.utcnow()
+                result.events_updated += 1
+            else:
+                # Create new event
+                new_event = ExternalEventTable(
+                    id=str(uuid4()),
+                    google_event_id=google_event_id,
+                    title=event_data['title'],
+                    description=event_data.get('description'),
+                    start_time=event_data['start_time'],
+                    end_time=event_data['end_time'],
+                    is_all_day=event_data['is_all_day'],
+                    is_recurring=event_data['is_recurring'],
+                    recurrence_rule=event_data.get('recurrence_rule'),
+                    calendar_id=event_data['calendar_id'],
+                    last_synced=datetime.utcnow(),
+                )
+                db.add(new_event)
+                result.events_added += 1
+
+        db.commit()
+        result.sync_time = datetime.utcnow()
+
+    except Exception as e:
+        result.errors.append(str(e))
+        raise HTTPException(status_code=500, detail=f"Calendar sync failed: {str(e)}")
+
+    return result
+
+
+def _block_to_model(table: TimeBlockTable, db: Optional[Session] = None) -> TimeBlock:
     """Convert database table to Pydantic model."""
+    is_completed = None
+
+    # For assignments, check if the underlying assignment is completed
+    if table.task_type == TaskType.ASSIGNMENT.value and db:
+        from app.db.tables import AssignmentTable
+        assignment = db.query(AssignmentTable).filter(AssignmentTable.id == table.task_id).first()
+        if assignment:
+            is_completed = assignment.is_completed
+
     return TimeBlock(
         id=table.id,
         task_type=TaskType(table.task_type),
@@ -187,6 +280,7 @@ def _block_to_model(table: TimeBlockTable) -> TimeBlock:
         status=TimeBlockStatus(table.status),
         actual_duration_minutes=table.actual_duration_minutes,
         notes=table.notes,
+        is_completed=is_completed,
         created_at=table.created_at,
         updated_at=table.updated_at,
     )

@@ -25,7 +25,15 @@ async def get_config(db: Session = Depends(get_db)):
         default = UserConfig.create_default()
         config = UserConfigTable(
             id=DEFAULT_CONFIG_ID,
-            work_schedules=[s.model_dump() for s in default.work_schedules],
+            work_schedules=[
+                {
+                    "day_of_week": s.day_of_week,
+                    "start_time": s.start_time.isoformat(),
+                    "end_time": s.end_time.isoformat(),
+                    "is_working_day": s.is_working_day,
+                }
+                for s in default.work_schedules
+            ],
             default_work_hours_per_day=default.default_work_hours_per_day,
             min_break_between_blocks_minutes=default.min_break_between_blocks_minutes,
             preferred_block_duration_minutes=default.preferred_block_duration_minutes,
@@ -58,7 +66,15 @@ async def update_config(update: UserConfigUpdate, db: Session = Depends(get_db))
     update_data = update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         if field == "work_schedules" and value:
-            value = [s.model_dump() if hasattr(s, "model_dump") else s for s in value]
+            value = [
+                {
+                    "day_of_week": s.day_of_week if hasattr(s, "day_of_week") else s.get("day_of_week"),
+                    "start_time": s.start_time.isoformat() if hasattr(s, "start_time") else s.get("start_time"),
+                    "end_time": s.end_time.isoformat() if hasattr(s, "end_time") else s.get("end_time"),
+                    "is_working_day": s.is_working_day if hasattr(s, "is_working_day") else s.get("is_working_day"),
+                }
+                for s in value
+            ]
         setattr(config, field, value)
 
     db.commit()

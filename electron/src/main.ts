@@ -5,7 +5,12 @@ import { BackendManager } from './utils/backend-manager';
 let mainWindow: BrowserWindow | null = null;
 let backendManager: BackendManager | null = null;
 
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+function isDev(): boolean {
+  // Check NODE_ENV first, or check if we're running from the dist folder
+  if (process.env.NODE_ENV === 'development') return true;
+  // In production, the app would be packaged
+  return process.env.NODE_ENV !== 'production';
+}
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -28,7 +33,7 @@ async function createWindow(): Promise<void> {
   });
 
   // Load the app
-  if (isDev) {
+  if (isDev()) {
     // In development, load from Angular dev server
     await mainWindow.loadURL('http://localhost:4200');
     mainWindow.webContents.openDevTools();
@@ -51,7 +56,7 @@ async function createWindow(): Promise<void> {
 
 async function startBackend(): Promise<void> {
   backendManager = new BackendManager({
-    isDev,
+    isDev: isDev(),
     port: 8765,
   });
 

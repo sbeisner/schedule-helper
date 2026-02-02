@@ -2,6 +2,7 @@
 
 from datetime import datetime, date, timedelta
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ from app.db.tables import (
 )
 from app.models.calendar import TimeBlock, TimeBlockStatus
 from app.models.base import TaskType
+from app.services.scheduler.smart_scheduler import SmartScheduler
 
 router = APIRouter()
 
@@ -77,73 +79,20 @@ async def generate_schedule(
         .all()
     )
 
-    # Generate basic schedule (placeholder - will be replaced with full algorithm)
-    blocks = []
+    # Use the smart scheduler
+    scheduler = SmartScheduler(config)
 
-    # Simple allocation: distribute work across available days
-    current_date = start_date
-    while current_date <= end_date:
-        day_of_week = current_date.weekday()
-
-        # Check if it's a working day (M-F by default)
-        is_working = day_of_week < 5
-
-        if is_working:
-            # Allocate project time in the morning (9am-12pm)
-            for project in projects[:3]:  # Top 3 projects for now
-                if project.hours_used < project.total_hours_allocated:
-                    block = TimeBlock(
-                        task_type=TaskType.PROJECT,
-                        task_id=str(project.id),
-                        task_name=project.name,
-                        start_time=datetime.combine(current_date, datetime.min.time().replace(hour=9)),
-                        end_time=datetime.combine(current_date, datetime.min.time().replace(hour=11)),
-                        status=TimeBlockStatus.SCHEDULED,
-                    )
-                    blocks.append(block)
-                    break  # One project per morning for simplicity
-
-            # Allocate assignment time in the afternoon (1pm-3pm) if deadlines are near
-            for assignment in assignments:
-                days_until_due = (assignment.due_date.date() - current_date).days
-                if 0 <= days_until_due <= 7:
-                    block = TimeBlock(
-                        task_type=TaskType.ASSIGNMENT,
-                        task_id=str(assignment.id),
-                        task_name=assignment.name,
-                        start_time=datetime.combine(current_date, datetime.min.time().replace(hour=13)),
-                        end_time=datetime.combine(current_date, datetime.min.time().replace(hour=15)),
-                        status=TimeBlockStatus.SCHEDULED,
-                    )
-                    blocks.append(block)
-                    break
-
-        else:  # Weekend
-            # Household tasks on weekends
-            for task in household_tasks[:2]:
-                block = TimeBlock(
-                    task_type=TaskType.HOUSEHOLD,
-                    task_id=str(task.id),
-                    task_name=task.name,
-                    start_time=datetime.combine(current_date, datetime.min.time().replace(hour=10)),
-                    end_time=datetime.combine(
-                        current_date,
-                        datetime.min.time().replace(
-                            hour=10 + (task.estimated_duration_minutes // 60),
-                            minute=task.estimated_duration_minutes % 60,
-                        ),
-                    ),
-                    status=TimeBlockStatus.SCHEDULED,
-                )
-                blocks.append(block)
-                break
-
-        current_date += timedelta(days=1)
+    blocks = scheduler.generate_schedule(
+        projects=projects,
+        assignments=assignments,
+        household_tasks=household_tasks,
+        external_events=external_events,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
     # Save to database if not preview
     if not preview_only:
-        from uuid import uuid4
-
         for block in blocks:
             db_block = TimeBlockTable(
                 id=str(uuid4()),
@@ -202,13 +151,20 @@ async def get_schedule_summary(
         (e.end_time - e.start_time).total_seconds() / 3600 for e in events
     )
 
-    # Calculate available hours (8 hours per weekday)
+    # Calculate available hours (work + personal time)
+    # Weekdays: 8 work hours + 5 evening hours (4pm-9pm) = 13 hours
+    # Weekends: 12 hours (9am-9pm)
     total_available = 0
     current = start_date
     while current <= end_date:
         if current.weekday() < 5:  # Weekday
-            total_available += 8
+            total_available += 13  # Work hours + evening
+        else:  # Weekend
+            total_available += 12
         current += timedelta(days=1)
+
+    total_scheduled = sum(hours_by_type.values())
+    free_hours = max(0, total_available - meeting_hours - total_scheduled)
 
     return {
         "start_date": start_date.isoformat(),
@@ -216,8 +172,8 @@ async def get_schedule_summary(
         "total_available_hours": total_available,
         "meeting_hours": round(meeting_hours, 2),
         "hours_by_type": {k: round(v, 2) for k, v in hours_by_type.items()},
-        "total_scheduled_hours": round(sum(hours_by_type.values()), 2),
-        "free_hours": round(total_available - meeting_hours - sum(hours_by_type.values()), 2),
+        "total_scheduled_hours": round(total_scheduled, 2),
+        "free_hours": round(free_hours, 2),
         "block_count": len(blocks),
         "event_count": len(events),
     }

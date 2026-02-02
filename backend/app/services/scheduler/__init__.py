@@ -1,1 +1,1 @@
-"""Scheduling engine services."""
+"""Scheduling services."""
